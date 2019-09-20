@@ -29,7 +29,7 @@ function data=regrouph5(root, varargin)
 %
 %    this file is part of EazyH5 Toolbox: https://github.com/fangq/eazyh5
 %
-%    License: GPLv3 or Apache 2.0, see https://github.com/fangq/eazyh5 for details
+%    License: GPLv3 or 3-clause BSD license, see https://github.com/fangq/eazyh5 for details
 %
 
 if(nargin<1)
@@ -111,20 +111,4 @@ if(isstruct(root))
         catch
         end
     end
-end
-
-if(isfield(data,'nirs') && isfield(data,'formatVersion') && ~isfield(data,'SNIRFData'))
-    data.SNIRFData=data.nirs;
-    if(iscell(data.nirs))
-        for i=1:length(data.nirs)
-            data.SNIRFData{i}.formatVersion=data.formatVersion;
-            len=length(fieldnames(data.SNIRFData{i}));
-            data.SNIRFData{i}=orderfields(data.SNIRFData{i},[len,1:len-1]);
-        end
-    else
-        data.SNIRFData.formatVersion=data.formatVersion;
-        len=length(fieldnames(data.SNIRFData));
-        data.SNIRFData=orderfields(data.SNIRFData,[len,1:len-1]);
-    end
-    data=rmfield(data,{'nirs','formatVersion'});
 end
