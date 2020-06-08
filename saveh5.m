@@ -19,7 +19,7 @@ function saveh5(data, fname, varargin)
 %            RootName: the HDF5 path of the root object. If not given, the
 %                         actual variable name for the data input will be used as
 %                         the root object. The value shall not include '/'.
-%            UnpackHex [1|0]: conver the 0x[hex code] in variable names
+%            UnpackHex [1|0]: convert the 0x[hex code] in variable names
 %                         back to Unicode string using decodevarname.m
 %            Compression: ['deflate'|''] - use zlib-deflate method 
 %                         to compress data array
@@ -29,6 +29,15 @@ function saveh5(data, fname, varargin)
 %                         compression level
 %            Chunk: a size vector or empty - breaking a large array into
 %                         small chunks of size specified by this parameter
+%            Transpose: [1|0] - if set to 1 (default), MATLAB arrays are
+%                         transposed (from column-major to row-major) so
+%                         that the output HDF5 dataset shows the same
+%                         dimensions as in MATLAB when reading from other
+%                         tools.
+%            ComplexFormat: {'realKey','imagKey'}: use 'realKey' and 'imagKey'
+%                  as keywords for the real and the imaginary part of a
+%                  complex array, respectively (sparse arrays not supported);
+%                  the default values are {'Real','Imag'}
 %
 %    example:
 %        a=struct('a',rand(5),'b','string','c',true,'d',2+3i,'e',{'test',[],1:5});
@@ -60,6 +69,14 @@ opt.compression=jsonopt('Compression','',opt);
 opt.compresslevel=jsonopt('CompressLevel',5,opt);
 opt.compressarraysize=jsonopt('CompressArraySize',100,opt);
 opt.unpackhex=jsonopt('UnpackHex',1,opt);
+opt.dotranspose=jsonopt('Transpose',1,opt);
+
+opt.releaseid=0;
+vers=ver('MATLAB');
+if(~isempty(vers))
+    opt.releaseid=datenum(vers(1).Date);
+end
+opt.skipempty=(opt.releaseid<datenum('1-Jan-2015'));
 
 if(isfield(opt,'rootname'))
    rootname=['/' opt.rootname];
@@ -192,6 +209,11 @@ if(isa(item,'string'))
 end
 typemap=h5types;
 
+opt=varargin{1};
+if(opt.dotranspose)
+    item=permute(item, ndims(item):-1:1);
+end
+
 pd = 'H5P_DEFAULT';
 gcpl = H5P.create('H5P_GROUP_CREATE');
 tracked = H5ML.get_constant_value('H5P_CRT_ORDER_TRACKED');
@@ -199,7 +221,9 @@ indexed = H5ML.get_constant_value('H5P_CRT_ORDER_INDEXED');
 order = bitor(tracked,indexed);
 H5P.set_link_creation_order(gcpl,order);
 
-opt=varargin{1};
+if(~(isfield(opt,'complexformat') && iscellstr(opt.complexformat) && numel(opt.complexformat)==2) || strcmp(opt.complexformat{1},opt.complexformat{2}))
+    opt.complexformat={'Real','Imag'};
+end
 
 usefilter=opt.compression;
 complevel=opt.compresslevel;
@@ -228,6 +252,13 @@ if(opt.unpackhex)
     name=decodevarname(name);
 end
 
+oid=[];
+
+if(isempty(item) && opt.skipempty)
+    warning('The HDF5 library is older than v1.8.7, and can not save empty datasets. Skip saving "%s"',name);
+    return;
+end
+
 if(isreal(item))
     if(issparse(item))
         idx=find(item);
@@ -244,18 +275,29 @@ else
         typeid=H5T.copy(typemap.(class(item)));
         elemsize=H5T.get_size(typeid);
         memtype = H5T.create ('H5T_COMPOUND', elemsize*2);
-        H5T.insert (memtype,'Real', 0, typeid);
-        H5T.insert (memtype,'Imag', elemsize, typeid);
+        H5T.insert (memtype,opt.complexformat{1}, 0, typeid);
+        H5T.insert (memtype,opt.complexformat{2}, elemsize, typeid);
         oid=H5D.create(handle,name,memtype,H5S.create_simple(ndims(item), fliplr(size(item)),fliplr(size(item))),pd);
-        H5D.write(oid,'H5ML_DEFAULT','H5S_ALL','H5S_ALL','H5P_DEFAULT',struct('Real',real(item),'Imag',imag(item)));
+        H5D.write(oid,'H5ML_DEFAULT','H5S_ALL','H5S_ALL','H5P_DEFAULT',struct(opt.complexformat{1},real(item),opt.complexformat{2},imag(item)));
     end
 end
-H5D.close(oid);
+if(~isempty(oid))
+   H5D.close(oid);
+end
 
 %%-------------------------------------------------------------------------
 function oid=sparse2h5(name, item,handle,level,varargin)
 
+opt=varargin{1};
+
 idx=item.SparseIndex;
+
+if(isempty(idx) && opt.skipempty)
+    warning('The HDF5 library is older than v1.8.7, and can not save empty datasets. Skip saving "%s"',name);
+    oid=[];
+    return;
+end
+
 adata=item.Size;
 item=rmfield(item,'Size');
 hasimag=isfield(item,'Imag');
@@ -264,7 +306,6 @@ typemap=h5types;
 
 pd = 'H5P_DEFAULT';
 
-opt=varargin{1};
 
 usefilter=opt.compression;
 complevel=opt.compresslevel;
